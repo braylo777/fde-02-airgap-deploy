@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Policy checks that keep an LLM deployment inside a private VPC: pinned internal images, default-deny networking, no public egress."
-repository = "https://github.com/braylo-ai/fde-02-airgap-deploy"
+repository = "https://github.com/braylo777/fde-02-airgap-deploy"
 
 [lib]
 crate-type = ["rlib", "cdylib"]
