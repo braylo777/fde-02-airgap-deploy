@@ -1,0 +1,279 @@
+{
+  "stage": 2,
+  "repo": "fde-02-airgap-deploy",
+  "title": "Air-Gapped & VPC Inference Deployments",
+  "tagline": "Policy checks that keep an LLM deployment inside a private VPC: internal digest-pinned images, default-deny networking, no public egress, no public IPs.",
+  "why": "Banks, hospitals and government buyers will not send data to a public API. The model has to run inside their VPC or on a network with no internet at all. The hard part is not starting the container; it is proving to their security team that nothing can leak out. This repo turns that proof into checks that run before every deploy: the same rules on the Kubernetes manifests, the Terraform plan and the egress firewall.",
+  "covers": [
+    "Kubernetes lint: internal registry, @sha256 pinning, default-deny NetworkPolicy, no 0.0.0.0/0 egress, internal-only load balancers, hardened pods, GPU limits and node pools",
+    "Egress allow-list engine: strict IPv4/CIDR math, wildcard host rules, deny by default, refuses an allow-all rule",
+    "Terraform plan scan: IGW, NAT, public IPs, open security groups, S3 public access, public EKS endpoint, mutable ECR tags",
+    "Image mirror plan: skopeo commands that copy public images into the internal registry by digest",
+    "Reference Terraform module (private VPC + VPC endpoints) and Helm chart (offline vLLM server) in infra/"
+  ],
+  "gaps": [
+    "The Terraform and Helm in infra/ are reference code; they were not applied to a real AWS account from this repo",
+    "No on-prem GPU provisioning (drivers, MIG, bare-metal) and no service mesh / mTLS zero-trust layer",
+    "YAML input: render with helm template and convert to JSON first (helm template . | yq -o json); only IPv4 CIDRs"
+  ],
+  "extra_md": "## Reference infrastructure\n\n`infra/terraform/main.tf` builds a VPC with private subnets only, no internet or NAT gateway, VPC endpoints for ECR, STS, CloudWatch Logs and S3, and an immutable ECR repository. `infra/helm/private-llm/` runs an OpenAI-compatible vLLM server with `HF_HUB_OFFLINE=1`, a default-deny NetworkPolicy, a read-only root filesystem and a GPU node selector.\n\nCheck them with this repo before you apply:\n\n```bash\nterraform plan -out plan.out && terraform show -json plan.out > plan.json\npython3 -c 'import json;print(json.dumps({\"plan\":json.load(open(\"plan.json\"))}))' | cargo run -q -- scan_tf_plan\n```",
+  "ops": [
+    {
+      "op": "lint_manifests",
+      "label": "Lint a risky deploy",
+      "help": "A typical first draft: public image, tag not digest, no default-deny policy, GPU request without a limit, public load balancer. Every high finding blocks the deploy.",
+      "input": {
+        "internal_registries": [
+          "registry.corp.internal"
+        ],
+        "manifests": [
+          {
+            "kind": "Deployment",
+            "metadata": {
+              "name": "vllm"
+            },
+            "spec": {
+              "template": {
+                "spec": {
+                  "containers": [
+                    {
+                      "name": "server",
+                      "image": "vllm/vllm-openai:latest",
+                      "resources": {
+                        "requests": {
+                          "nvidia.com/gpu": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "Service",
+            "metadata": {
+              "name": "vllm"
+            },
+            "spec": {
+              "type": "LoadBalancer"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "lint_manifests",
+      "label": "Lint the fixed deploy",
+      "help": "The same service after the fixes. pass is true: no high findings.",
+      "input": {
+        "internal_registries": [
+          "registry.corp.internal"
+        ],
+        "manifests": [
+          {
+            "kind": "NetworkPolicy",
+            "metadata": {
+              "name": "default-deny"
+            },
+            "spec": {
+              "podSelector": {},
+              "policyTypes": [
+                "Ingress",
+                "Egress"
+              ]
+            }
+          },
+          {
+            "kind": "Deployment",
+            "metadata": {
+              "name": "vllm"
+            },
+            "spec": {
+              "template": {
+                "spec": {
+                  "automountServiceAccountToken": false,
+                  "nodeSelector": {
+                    "pool": "gpu"
+                  },
+                  "securityContext": {
+                    "runAsNonRoot": true
+                  },
+                  "containers": [
+                    {
+                      "name": "server",
+                      "image": "registry.corp.internal/docker.io/vllm/vllm-openai@sha256:3f1c9e0d7a2b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
+                      "securityContext": {
+                        "readOnlyRootFilesystem": true
+                      },
+                      "resources": {
+                        "limits": {
+                          "nvidia.com/gpu": 1
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "kind": "Service",
+            "metadata": {
+              "name": "vllm",
+              "annotations": {
+                "service.beta.kubernetes.io/aws-load-balancer-scheme": "internal"
+              }
+            },
+            "spec": {
+              "type": "LoadBalancer"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "op": "check_egress",
+      "label": "Egress firewall",
+      "help": "Deny by default. Only the VPC range and the S3 endpoint on 443 are open. Try adding a rule with cidr 0.0.0.0/0: it is refused.",
+      "input": {
+        "rules": [
+          {
+            "cidr": "10.42.0.0/16",
+            "ports": [
+              443,
+              8000
+            ]
+          },
+          {
+            "host": "*.s3.us-east-1.amazonaws.com",
+            "ports": [
+              443
+            ]
+          }
+        ],
+        "connections": [
+          {
+            "dest": "10.42.3.7",
+            "port": 8000
+          },
+          {
+            "dest": "models.s3.us-east-1.amazonaws.com",
+            "port": 443
+          },
+          {
+            "dest": "huggingface.co",
+            "port": 443
+          },
+          {
+            "dest": "10.42.3.7",
+            "port": 22
+          },
+          {
+            "dest": "8.8.8.8",
+            "port": 53
+          }
+        ]
+      }
+    },
+    {
+      "op": "scan_tf_plan",
+      "label": "Terraform plan scan",
+      "help": "Excerpt of terraform show -json. The plan adds an internet gateway, a public subnet, an open security group and a public EKS endpoint.",
+      "input": {
+        "plan": {
+          "resource_changes": [
+            {
+              "address": "aws_internet_gateway.gw",
+              "type": "aws_internet_gateway",
+              "change": {
+                "actions": [
+                  "create"
+                ],
+                "after": {}
+              }
+            },
+            {
+              "address": "aws_subnet.a",
+              "type": "aws_subnet",
+              "change": {
+                "actions": [
+                  "create"
+                ],
+                "after": {
+                  "map_public_ip_on_launch": true
+                }
+              }
+            },
+            {
+              "address": "aws_security_group.nodes",
+              "type": "aws_security_group",
+              "change": {
+                "actions": [
+                  "create"
+                ],
+                "after": {
+                  "egress": [
+                    {
+                      "cidr_blocks": [
+                        "0.0.0.0/0"
+                      ]
+                    }
+                  ],
+                  "ingress": [
+                    {
+                      "cidr_blocks": [
+                        "10.42.0.0/16"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "address": "aws_eks_cluster.main",
+              "type": "aws_eks_cluster",
+              "change": {
+                "actions": [
+                  "create"
+                ],
+                "after": {
+                  "vpc_config": [
+                    {
+                      "endpoint_public_access": true
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "address": "aws_ecr_repository.models",
+              "type": "aws_ecr_repository",
+              "change": {
+                "actions": [
+                  "create"
+                ],
+                "after": {
+                  "image_tag_mutability": "IMMUTABLE"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "op": "mirror_plan",
+      "label": "Mirror images",
+      "help": "Plan the copy of public images into the internal registry. Tag-only images are flagged: resolve the digest before the air gap.",
+      "input": {
+        "internal_registry": "registry.corp.internal",
+        "images": [
+          "vllm/vllm-openai:v0.9.2",
+          "nvcr.io/nvidia/tritonserver@sha256:9b1d2c3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c",
+          "redis:7.4"
+        ]
+      }
+    }
+  ]
+}

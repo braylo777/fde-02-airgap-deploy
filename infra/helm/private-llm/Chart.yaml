@@ -1,0 +1,4 @@
+apiVersion: v2
+name: private-llm
+description: OpenAI-compatible inference server for an air-gapped cluster (reference chart).
+version: 0.1.0

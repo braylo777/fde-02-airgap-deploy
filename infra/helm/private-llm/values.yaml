@@ -1,0 +1,9 @@
+# Image must come from the internal registry and be pinned by digest.
+image: registry.corp.internal/docker.io/vllm/vllm-openai@sha256:REPLACE_WITH_MIRRORED_DIGEST
+model: /models/llama-3.1-8b-instruct-awq
+gpus: 1
+gpuNodeSelector:
+  pool: gpu
+# Only these in-cluster CIDRs may call the server.
+allowFromCidrs:
+  - 10.42.0.0/16
