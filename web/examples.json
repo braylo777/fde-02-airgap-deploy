@@ -9,7 +9,7 @@
     "Egress allow-list engine: strict IPv4/CIDR math, wildcard host rules, deny by default, refuses an allow-all rule",
     "Terraform plan scan: IGW, NAT, public IPs, open security groups, S3 public access, public EKS endpoint, mutable ECR tags",
     "Image mirror plan: skopeo commands that copy public images into the internal registry by digest",
-    "Reference Terraform module (private VPC + VPC endpoints) and Helm chart (offline vLLM server) in infra/"
+    "Reference Terraform module (private VPC + VPC endpoints) and a Helm chart for the full private stack in infra/: offline vLLM server, Postgres with pgvector, Qdrant, all digest-pinned, default-deny with in-namespace-only egress"
   ],
   "gaps": [
     "The Terraform and Helm in infra/ are reference code; they were not applied to a real AWS account from this repo",
@@ -275,5 +275,9 @@
         ]
       }
     }
-  ]
+  ],
+  "project": {
+    "n": 2,
+    "title": "One-Click Air-Gapped Helm Deployer"
+  }
 }

@@ -7,3 +7,17 @@ gpuNodeSelector:
 # Only these in-cluster CIDRs may call the server.
 allowFromCidrs:
   - 10.42.0.0/16
+
+# Data layer: Postgres with pgvector (app DB + vectors) and Qdrant (vector store).
+# Both images come from the internal registry, pinned by digest. Turn either off if the
+# customer already runs one.
+postgres:
+  enabled: true
+  image: registry.corp.internal/docker.io/pgvector/pgvector@sha256:REPLACE_WITH_MIRRORED_DIGEST
+  storage: 100Gi
+  # Name of an existing Secret with key POSTGRES_PASSWORD (created by the customer's vault).
+  passwordSecret: private-llm-postgres
+qdrant:
+  enabled: true
+  image: registry.corp.internal/docker.io/qdrant/qdrant@sha256:REPLACE_WITH_MIRRORED_DIGEST
+  storage: 200Gi

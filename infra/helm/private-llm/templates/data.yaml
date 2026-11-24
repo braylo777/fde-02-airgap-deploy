@@ -1,0 +1,100 @@
+# Data layer for the private AI stack. Zero public egress: the default-deny policy in
+# all.yaml still applies; the policies below only open traffic inside the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-egress-in-namespace
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # Pods may reach other pods in this namespace (app -> LLM, DB, vector store) ...
+    - to:
+        - podSelector: {}
+    # ... and cluster DNS. Nothing else: no internet, no other namespaces.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+{{- range $name, $port := dict "postgres" 5432 "qdrant" 6333 }}
+{{- $cfg := index $.Values $name }}
+{{- if $cfg.enabled }}
+{{- if contains "REPLACE_WITH" $cfg.image }}{{ fail (printf "%s.image: set the mirrored @sha256 digest" $name) }}{{ end }}
+{{- if not $.Values.allowFromCidrs }}{{ fail "allowFromCidrs must not be empty (an empty list would allow every source)" }}{{ end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}-allow-in
+spec:
+  podSelector:
+    matchLabels: { app: {{ $.Release.Name }}-{{ $name }} }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+      {{- range $.Values.allowFromCidrs }}
+        - ipBlock: { cidr: {{ . }} }
+      {{- end }}
+      ports: [{ port: {{ $port }} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+spec:
+  type: ClusterIP
+  selector: { app: {{ $.Release.Name }}-{{ $name }} }
+  ports: [{ port: {{ $port }} }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+spec:
+  serviceName: {{ $.Release.Name }}-{{ $name }}
+  replicas: 1
+  selector:
+    matchLabels: { app: {{ $.Release.Name }}-{{ $name }} }
+  template:
+    metadata:
+      labels: { app: {{ $.Release.Name }}-{{ $name }} }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 999, fsGroup: 999 }
+      containers:
+        - name: {{ $name }}
+          image: {{ $cfg.image }}
+          ports: [{ containerPort: {{ $port }} }]
+          {{- if eq $name "postgres" }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $cfg.passwordSecret }}, key: POSTGRES_PASSWORD }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: run, mountPath: /var/run/postgresql }
+          {{- else }}
+          env:
+            - { name: QDRANT__TELEMETRY_DISABLED, value: "true" }
+          volumeMounts:
+            - { name: data, mountPath: /qdrant/storage }
+            - { name: data, mountPath: /qdrant/snapshots, subPath: snapshots }
+          {{- end }}
+          securityContext: { readOnlyRootFilesystem: true, allowPrivilegeEscalation: false }
+          resources:
+            requests: { cpu: "1", memory: 2Gi }
+            limits: { memory: 8Gi }
+      volumes:
+        - name: run
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: { storage: {{ $cfg.storage }} }
+{{- end }}
+{{- end }}

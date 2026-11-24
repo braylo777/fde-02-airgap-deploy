@@ -4,6 +4,8 @@
 
 Policy checks that keep an LLM deployment inside a private VPC: internal digest-pinned images, default-deny networking, no public egress, no public IPs.
 
+**Also built as Project 2 of 12, "One-Click Air-Gapped Helm Deployer",** from the companion [12 FDE projects post](https://x.com/suraj_sharma14/status/2125197762752806998).
+
 **Live demo:** https://fde-02-airgap-deploy.braylo777.workers.dev — the Rust core runs in your browser as WebAssembly. No server, no tracking.
 
 ## Why this matters
@@ -16,7 +18,7 @@ Banks, hospitals and government buyers will not send data to a public API. The m
 - Egress allow-list engine: strict IPv4/CIDR math, wildcard host rules, deny by default, refuses an allow-all rule
 - Terraform plan scan: IGW, NAT, public IPs, open security groups, S3 public access, public EKS endpoint, mutable ECR tags
 - Image mirror plan: skopeo commands that copy public images into the internal registry by digest
-- Reference Terraform module (private VPC + VPC endpoints) and Helm chart (offline vLLM server) in infra/
+- Reference Terraform module (private VPC + VPC endpoints) and a Helm chart for the full private stack in infra/: offline vLLM server, Postgres with pgvector, Qdrant, all digest-pinned, default-deny with in-namespace-only egress
 
 ## What it does not do (yet)
 
@@ -91,7 +93,7 @@ web/              demo page; examples.json drives both the page and this README
 
 ## Part of a series
 
-This is one of 12 repos that work through a public Forward Deployed Engineering roadmap ([source post](https://x.com/suraj_sharma14/status/2124827808535048566)). All 12: [github.com/braylo777?q=fde-](https://github.com/braylo777?tab=repositories&q=fde-).
+This is one of 12 repos that work through a public Forward Deployed Engineering roadmap ([12 stages](https://x.com/suraj_sharma14/status/2124827808535048566), [12 projects](https://x.com/suraj_sharma14/status/2125197762752806998)). All 12: [github.com/braylo777?q=fde-](https://github.com/braylo777?tab=repositories&q=fde-).
 
 ## License
 
